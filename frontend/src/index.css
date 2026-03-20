@@ -1,0 +1,58 @@
+/* Global reset and base styles */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --color-bg: #f8f9fa;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-primary: #1a56db;
+  --color-primary-hover: #1648c0;
+  --color-text-primary: #1a202c;
+  --color-text-secondary: #4a5568;
+  --color-text-muted: #718096;
+  --color-user-bubble: #1a56db;
+  --color-user-bubble-text: #ffffff;
+  --color-assistant-bubble: #f0f4ff;
+  --color-assistant-bubble-text: #1a202c;
+  --color-error: #e53e3e;
+  --color-success: #38a169;
+  --color-warning: #d69e2e;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.10);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+}
+
+body {
+  min-height: 100vh;
+  background: var(--color-bg);
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Markdown content inside assistant bubbles */
+.assistant-markdown p { margin-bottom: 8px; }
+.assistant-markdown p:last-child { margin-bottom: 0; }
+.assistant-markdown ul, .assistant-markdown ol { padding-left: 20px; margin-bottom: 8px; }
+.assistant-markdown li { margin-bottom: 2px; }
+.assistant-markdown strong { font-weight: 600; }
+.assistant-markdown em { font-style: italic; }
+.assistant-markdown code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 13px; }
+.assistant-markdown pre { background: rgba(0,0,0,0.06); padding: 10px; border-radius: 6px; overflow-x: auto; margin-bottom: 8px; }
+.assistant-markdown pre code { background: none; padding: 0; }
+.assistant-markdown h1, .assistant-markdown h2, .assistant-markdown h3 { font-weight: 600; margin-bottom: 6px; margin-top: 10px; }
+.assistant-markdown h1:first-child, .assistant-markdown h2:first-child, .assistant-markdown h3:first-child { margin-top: 0; }

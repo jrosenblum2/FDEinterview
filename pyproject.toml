@@ -1,0 +1,40 @@
+[project]
+name = "reducto-rag"
+version = "1.0.0"
+description = "Financial document RAG application powered by Reducto, pgvector, and Vertex AI"
+requires-python = ">=3.11"
+
+dependencies = [
+    # Web framework
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+
+    # Database
+    "psycopg2-binary>=2.9.9",
+    "pgvector>=0.3.2",
+
+    # Cloud SQL Python Connector (production connectivity)
+    "cloud-sql-python-connector[pg8000]>=1.9.0",
+    "pg8000>=1.31.2",
+
+    # GCP / Vertex AI
+    "google-cloud-aiplatform>=1.60.0",
+    "vertexai>=1.60.0",
+
+    # Reducto document parsing API (reductoai is the correct PyPI package name;
+    # the unrelated "reducto" package on PyPI is a Python code stats tool)
+    "reductoai",
+
+    # Environment / config
+    "python-dotenv>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Tell hatchling where the application package lives.
+# Without this it looks for a directory named "reducto_rag" and fails.
+[tool.hatch.build.targets.wheel]
+packages = ["backend"]
