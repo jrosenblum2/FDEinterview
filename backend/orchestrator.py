@@ -78,7 +78,9 @@ def handle_upload(file_bytes: bytes, filename: str, session_id: str) -> dict:
         A dict with keys:
             - document_id (str): UUID of the document record.
             - filename (str): Original filename.
-            - status (str): 'already_exists' | 'complete' | 'failed'
+            - status (str): 'already_exists' | 'complete'
+              On any processing failure the document record is deleted and
+              the exception is re-raised (no 'failed' status is persisted).
     """
     logger.info("handle_upload called for file: %s (session: %s)", filename, session_id)
 
@@ -112,10 +114,9 @@ def handle_upload(file_bytes: bytes, filename: str, session_id: str) -> dict:
         raw_chunks = document_parser.parse_document(file_bytes, filename)
         logger.info("Reducto returned %d chunks for %s.", len(raw_chunks), filename)
     except Exception as exc:
-        # Mark the document as failed so the UI can surface the error
-        database.update_document_status(document_id, "failed")
+        database.delete_document(document_id)
         logger.error(
-            "Reducto parse failed for document_id=%s. Marked as failed.", document_id
+            "Reducto parse failed for document_id=%s. Deleted document record.", document_id
         )
         raise
 
@@ -132,9 +133,9 @@ def handle_upload(file_bytes: bytes, filename: str, session_id: str) -> dict:
         vectors = embeddings.embed_chunks(embed_texts)
         logger.info("Received %d embedding vectors.", len(vectors))
     except Exception:
-        database.update_document_status(document_id, "failed")
+        database.delete_document(document_id)
         logger.error(
-            "Embedding failed for document_id=%s. Marked as failed.", document_id
+            "Embedding failed for document_id=%s. Deleted document record.", document_id
         )
         raise
 
@@ -164,9 +165,9 @@ def handle_upload(file_bytes: bytes, filename: str, session_id: str) -> dict:
             len(chunk_records),
         )
     except Exception:
-        database.update_document_status(document_id, "failed")
+        database.delete_document(document_id)
         logger.error(
-            "Chunk storage failed for document_id=%s. Marked as failed.", document_id
+            "Chunk storage failed for document_id=%s. Deleted document record.", document_id
         )
         raise
 
@@ -183,12 +184,13 @@ def handle_message(message: str, session_id: str) -> dict:
 
     Pipeline steps:
         1. Fetch recent conversation history and list of uploaded documents
-        2. Classify intent (query vs. out_of_scope) via Gemini
+        2. Classify intent (query vs. out_of_scope) via Gemini; identify relevant documents
         3. [If query] Embed the refined query
-        4. [If query] Retrieve top-K relevant chunks via pgvector
-        5. [If query] Evaluate whether chunks are sufficient to answer
-        6. [If sufficient] Generate the final answer via Gemini
-        7. Persist both the user message and assistant reply to chat_history
+        4. [If query] Retrieve top-K relevant chunks via pgvector, filtered to relevant documents
+        5. [If query] Generate the final answer via Gemini — includes an internal sufficiency
+           check; if the chunks are insufficient the model returns an explanation instead of
+           an answer, and no citations are returned
+        6. Persist both the user message and assistant reply to chat_history
 
     Args:
         message: The raw message text submitted by the user.
@@ -221,8 +223,17 @@ def handle_message(message: str, session_id: str) -> dict:
     intent_result = generation.classify_intent(message, document_names, history)
     intent = intent_result.get("intent", "out_of_scope")
     refined_query = intent_result.get("refined_query", message)
+    relevant_documents = intent_result.get("relevant_documents") or []
+    # Validate against actual document names — the LLM may hallucinate or
+    # slightly mangle filenames, which would cause the SQL filter to match nothing.
+    valid_names = set(document_names)
+    relevant_documents = [d for d in relevant_documents if d in valid_names]
+    # Fall back to all documents if none matched or LLM returned an empty list
+    if not relevant_documents:
+        relevant_documents = document_names
 
     logger.info("Intent classified as '%s'.", intent)
+    logger.info("Relevant documents: %s", relevant_documents)
 
     if intent == "out_of_scope":
         # Return a canned response without running retrieval or generation
@@ -246,7 +257,7 @@ def handle_message(message: str, session_id: str) -> dict:
     # Step 4 — Retrieve top-K relevant chunks
     # -------------------------------------------------------------------------
     logger.info("Retrieving relevant chunks for query.")
-    chunks = retrieval.retrieve_top_chunks(query_vector)
+    chunks = retrieval.retrieve_top_chunks(query_vector, document_names=relevant_documents)
     logger.info("Retrieved %d chunks.", len(chunks))
 
     if not chunks:
@@ -260,32 +271,19 @@ def handle_message(message: str, session_id: str) -> dict:
         return {"answer": no_docs_reply, "citations": []}
 
     # -------------------------------------------------------------------------
-    # Step 5 — Sufficiency self-evaluation
-    # -------------------------------------------------------------------------
-    logger.info("Evaluating chunk sufficiency.")
-    sufficiency = generation.evaluate_sufficiency(refined_query, chunks)
-    is_sufficient = sufficiency.get("sufficient", False)
-    reason = sufficiency.get("reason", "")
-
-    logger.info("Sufficiency: sufficient=%s, reason=%s", is_sufficient, reason)
-
-    if not is_sufficient:
-        insufficient_reply = (
-            f"The uploaded documents do not appear to contain enough information "
-            f"to answer your question confidently. {reason}"
-        )
-        database.save_message(session_id, "user", message)
-        database.save_message(session_id, "assistant", insufficient_reply)
-        return {"answer": insufficient_reply, "citations": []}
-
-    # -------------------------------------------------------------------------
-    # Step 6 — Generate the final answer
+    # Step 5 — Generate the final answer (includes sufficiency self-evaluation)
     # -------------------------------------------------------------------------
     logger.info("Generating final answer.")
     generation_result = generation.generate_answer(refined_query, chunks, history)
     answer = generation_result["answer"]
     used_chunk_indices = generation_result["used_chunk_indices"]  # 1-based
-    logger.info("Answer generated. Length: %d chars.", len(answer))
+    is_sufficient = generation_result.get("sufficient", True)
+    logger.info("Answer generated. sufficient=%s, length=%d chars.", is_sufficient, len(answer))
+
+    if not is_sufficient:
+        database.save_message(session_id, "user", message)
+        database.save_message(session_id, "assistant", answer)
+        return {"answer": answer, "citations": []}
 
     # -------------------------------------------------------------------------
     # Step 7 — Persist messages and build citations
@@ -304,6 +302,8 @@ def handle_message(message: str, session_id: str) -> dict:
         ]
     else:
         cited_chunks = chunks
+
+    cited_chunks = sorted(cited_chunks, key=lambda c: (c.get("page_number") is None, c.get("page_number")))
 
     citations = [
         {

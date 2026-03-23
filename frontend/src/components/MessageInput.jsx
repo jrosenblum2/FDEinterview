@@ -4,37 +4,40 @@ import React, { useState, useRef } from 'react'
  * MessageInput — text input bar with optional PDF file attachment.
  *
  * Props:
- *   onSubmit (fn): Called with (message: string, file: File | null)
+ *   onSubmit (fn): Called with (message: string, files: File[])
  *   disabled (bool): Disables input and button during loading
  */
 export default function MessageInput({ onSubmit, disabled }) {
   const [text, setText] = useState('')
-  const [pendingFile, setPendingFile] = useState(null)
+  const [pendingFiles, setPendingFiles] = useState([])
   const fileInputRef = useRef(null)
 
   const handleFileChange = (e) => {
-    const file = e.target.files?.[0]
-    if (file) setPendingFile(file)
-    // Reset the input so the same file can be re-selected if needed
+    const selected = Array.from(e.target.files || [])
+    if (selected.length) {
+      setPendingFiles(prev => {
+        const existingNames = new Set(prev.map(f => f.name))
+        return [...prev, ...selected.filter(f => !existingNames.has(f.name))]
+      })
+    }
     e.target.value = ''
   }
 
-  const handleRemoveFile = () => {
-    setPendingFile(null)
+  const handleRemoveFile = (name) => {
+    setPendingFiles(prev => prev.filter(f => f.name !== name))
   }
 
   const handleSubmit = (e) => {
     e.preventDefault()
     if (disabled) return
-    if (!text.trim() && !pendingFile) return
+    if (!text.trim() && pendingFiles.length === 0) return
 
-    onSubmit(text.trim(), pendingFile)
+    onSubmit(text.trim(), pendingFiles)
     setText('')
-    setPendingFile(null)
+    setPendingFiles([])
   }
 
   const handleKeyDown = (e) => {
-    // Submit on Enter (but not Shift+Enter, which inserts a newline)
     if (e.key === 'Enter' && !e.shiftKey) {
       handleSubmit(e)
     }
@@ -42,28 +45,33 @@ export default function MessageInput({ onSubmit, disabled }) {
 
   return (
     <div style={styles.wrapper}>
-      {/* Pending file badge */}
-      {pendingFile && (
-        <div style={styles.fileBadge}>
-          <span style={styles.fileIcon}>📎</span>
-          <span style={styles.fileName}>{pendingFile.name}</span>
-          <button
-            style={styles.removeFile}
-            onClick={handleRemoveFile}
-            type="button"
-            aria-label="Remove file"
-          >
-            ✕
-          </button>
+      {/* Pending file badges */}
+      {pendingFiles.length > 0 && (
+        <div style={styles.fileBadgeRow}>
+          {pendingFiles.map(file => (
+            <div key={file.name} style={styles.fileBadge}>
+              <span style={styles.fileIcon}>📎</span>
+              <span style={styles.fileName}>{file.name}</span>
+              <button
+                style={styles.removeFile}
+                onClick={() => handleRemoveFile(file.name)}
+                type="button"
+                aria-label={`Remove ${file.name}`}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
         </div>
       )}
 
       <form style={styles.form} onSubmit={handleSubmit}>
-        {/* Hidden file input */}
+        {/* Hidden file input — multiple enabled */}
         <input
           ref={fileInputRef}
           type="file"
           accept=".pdf"
+          multiple
           style={{ display: 'none' }}
           onChange={handleFileChange}
         />
@@ -75,7 +83,7 @@ export default function MessageInput({ onSubmit, disabled }) {
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled}
           aria-label="Attach PDF"
-          title="Attach a PDF document"
+          title="Attach PDF documents"
         >
           📎
         </button>
@@ -87,8 +95,8 @@ export default function MessageInput({ onSubmit, disabled }) {
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            pendingFile
-              ? 'Ask a question about this document…'
+            pendingFiles.length > 0
+              ? 'Ask a question about these documents…'
               : 'Ask a question about your documents…'
           }
           disabled={disabled}
@@ -98,8 +106,8 @@ export default function MessageInput({ onSubmit, disabled }) {
         {/* Send button */}
         <button
           type="submit"
-          style={styles.sendButton(disabled || (!text.trim() && !pendingFile))}
-          disabled={disabled || (!text.trim() && !pendingFile)}
+          style={styles.sendButton(disabled || (!text.trim() && pendingFiles.length === 0))}
+          disabled={disabled || (!text.trim() && pendingFiles.length === 0)}
           aria-label="Send"
         >
           ➤
@@ -115,15 +123,20 @@ const styles = {
     background: 'var(--color-surface)',
     padding: '10px 20px 14px',
   },
+  fileBadgeRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 8,
+  },
   fileBadge: {
     display: 'inline-flex',
     alignItems: 'center',
     gap: 6,
-    background: '#ebf4ff',
-    border: '1px solid #bee3f8',
+    background: '#f3e8fd',
+    border: '1px solid #d8b4fe',
     borderRadius: 'var(--radius-sm)',
     padding: '4px 10px',
-    marginBottom: 8,
     fontSize: 12,
     color: 'var(--color-primary)',
     maxWidth: '100%',

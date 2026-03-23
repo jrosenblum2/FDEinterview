@@ -1,18 +1,19 @@
 """
 generation.py
 
-All Vertex AI Gemini generative calls using gemini-2.5-flash.
+Vertex AI Gemini generative calls. Two models are used:
+  - gemini-2.5-flash-lite: classify_intent (fast, cheap — used for classification)
+  - gemini-2.5-flash:      generate_answer (highest quality for final response)
 
-Three distinct generative functions are exposed:
-  1. classify_intent      – determines whether the user's message is a document
-                            query or out of scope.
-  2. evaluate_sufficiency – checks whether the retrieved chunks contain enough
-                            information to answer the user's question.
-  3. generate_answer      – produces the final answer grounded in the retrieved
-                            chunks and conversation history.
-
-All system prompts are intentionally left as TODO placeholders per the project
-spec — do not fill them in without explicit instruction.
+Two distinct generative functions are exposed:
+  1. classify_intent  – determines whether the user's message is a document query
+                        or out of scope, refines the query for RAG retrieval, and
+                        identifies which uploaded documents are most likely relevant.
+  2. generate_answer  – evaluates whether the retrieved chunks are sufficient to
+                        answer the question, then either generates a grounded answer
+                        or explains why the documents cannot answer it. Both
+                        sufficiency evaluation and answer generation happen in a
+                        single LLM call to minimise latency and API cost.
 """
 
 import os
@@ -25,10 +26,11 @@ from vertexai.generative_models import GenerativeModel, GenerationConfig
 
 logger = logging.getLogger(__name__)
 
+LITE_MODEL_NAME = "gemini-2.5-flash-lite"
 GENERATION_MODEL_NAME = "gemini-2.5-flash"
 
 
-def _get_generative_model() -> GenerativeModel:
+def _get_generative_model(model_name: str = GENERATION_MODEL_NAME) -> GenerativeModel:
     """
     Initialises Vertex AI and returns a GenerativeModel instance.
 
@@ -44,7 +46,7 @@ def _get_generative_model() -> GenerativeModel:
         raise ValueError("GCP_PROJECT_ID environment variable is not set.")
 
     vertexai.init(project=project_id, location=region)
-    return GenerativeModel(GENERATION_MODEL_NAME)
+    return GenerativeModel(model_name)
 
 
 def classify_intent(
@@ -71,9 +73,34 @@ def classify_intent(
     """
     logger.info("Classifying intent for message: %.100s...", user_message)
 
-    # TODO: refine intent classification prompt
-    system_prompt = """You are an intent classification assistant for a financial document Q&A application.
-Classify the user's intent and return a JSON object only."""
+    # Intent classification and query enhancement prompt
+    system_prompt = """You are an intent classification and query enhancing assistant for a financial document Q&A application.
+    Classify the intent and return a JSON object only. The intent should be 'query' if the question that can be answered by the 
+    uploaded documents, and 'out_of_scope' if they are making a statement, asking for general advice, or anything that cannot be 
+    answered by the documents alone.
+
+    Also return a cleaned-up version of the question as refined_query. refined_query will be used for a
+    RAG retrieval, so if the intent is 'query', make sure to enhance the question with any relevant context
+    from the conversation history and relevant uploaded document names. The goal is to make the query as effective
+    as possible for RAG retrieval, so if it is vague, make it more specific and include the key words that are likely
+    to retrieve the most relevant chunks from the RAG database. If the intent is 'out_of_scope', refined_query
+    should just be an empty string.
+
+    Also return relevant_documents: a list of filenames from the uploaded documents list that are most likely
+    to contain the answer to the user's question. Only include documents that are genuinely relevant — if the
+    question is clearly about a specific document or fund, exclude unrelated ones. If the question is broad or
+    could span multiple documents, include all of them. If the intent is 'out_of_scope', return an empty list.
+    The filenames must exactly match the names in the uploaded documents list.
+
+    Use the conversation history and list of uploaded document names to inform your classification of the query,
+    but do not reference them directly in your answer. Return ONLY a JSON object with no preamble
+    or markdown, in the following format:
+    {
+    "intent": "query" or "out_of_scope",
+    "refined_query": "the question, cleaned up and made more precise if needed",
+    "relevant_documents": ["filename1.pdf", "filename2.pdf"]
+    }
+    """
 
     # Build a context string from the recent conversation history
     history_text = "\n".join(
@@ -88,21 +115,22 @@ Classify the user's intent and return a JSON object only."""
     )
 
     user_prompt = f"""Uploaded documents:
-{documents_text}
+    {documents_text}
 
-Recent conversation:
-{history_text}
+    Recent conversation history:
+    {history_text}
 
-User message: {user_message}
+    User message: {user_message}
 
-Classify the intent and return ONLY a JSON object with no preamble or markdown:
-{{
-  "intent": "query" or "out_of_scope",
-  "refined_query": "the user's question, cleaned up and made more precise if needed"
-}}"""
+    Classify the intent and return ONLY a JSON object with no preamble or markdown:
+    {{
+    "intent": "query" or "out_of_scope",
+    "refined_query": "the question, cleaned up and made more precise if needed",
+    "relevant_documents": ["filename1.pdf", "filename2.pdf"]
+    }}"""
 
     try:
-        model = _get_generative_model()
+        model = _get_generative_model(LITE_MODEL_NAME)
         response = model.generate_content(
             [system_prompt, user_prompt],
             generation_config=GenerationConfig(
@@ -116,72 +144,6 @@ Classify the intent and return ONLY a JSON object with no preamble or markdown:
         return result
     except Exception:
         logger.exception("Intent classification failed.")
-        raise
-
-
-def evaluate_sufficiency(
-    refined_query: str,
-    retrieved_chunks: List[dict],
-) -> dict:
-    """
-    Uses Gemini to determine whether the retrieved chunks contain enough
-    information to confidently answer the refined query.
-
-    Args:
-        refined_query: The cleaned-up user question from classify_intent().
-        retrieved_chunks: List of chunk dicts returned by retrieval.retrieve_top_chunks().
-
-    Returns:
-        A dict with keys:
-            - sufficient (bool): True if the chunks are sufficient.
-            - reason (str): Brief explanation of the decision.
-
-    Raises:
-        Exception: Re-raises any Vertex AI or JSON parsing error after logging.
-    """
-    logger.info("Evaluating chunk sufficiency for query: %.100s...", refined_query)
-
-    # TODO: refine sufficiency evaluation prompt
-    system_prompt = """You are a quality evaluator for a financial document Q&A system.
-Determine whether the provided document chunks contain enough information to answer the question.
-Return a JSON object only."""
-
-    # Format chunks for the model
-    chunks_text = "\n\n".join(
-        f"[Chunk {i+1} from '{c.get('filename', 'unknown')}', page {c.get('page_number', '?')}]:\n{c.get('chunk_text', '')}"
-        for i, c in enumerate(retrieved_chunks)
-    )
-
-    user_prompt = f"""Question: {refined_query}
-
-Retrieved document chunks:
-{chunks_text}
-
-Return ONLY a JSON object with no preamble or markdown:
-{{
-  "sufficient": true or false,
-  "reason": "brief explanation"
-}}"""
-
-    try:
-        model = _get_generative_model()
-        response = model.generate_content(
-            [system_prompt, user_prompt],
-            generation_config=GenerationConfig(
-                temperature=0.0,
-                response_mime_type="application/json",
-            ),
-        )
-        raw_text = response.text.strip()
-        result = json.loads(raw_text)
-        logger.info(
-            "Sufficiency evaluation result: sufficient=%s, reason=%s",
-            result.get("sufficient"),
-            result.get("reason"),
-        )
-        return result
-    except Exception:
-        logger.exception("Sufficiency evaluation failed.")
         raise
 
 
@@ -213,36 +175,49 @@ def generate_answer(
     """
     logger.info("Generating answer for query: %.100s...", refined_query)
 
-    # TODO: refine answer generation prompt
-    system_prompt = """You are a helpful financial document assistant.
-Answer the user's question accurately based only on the provided numbered document excerpts.
-Return a JSON object only — no preamble, no markdown fences."""
+    system_prompt = """You are a helpful, honest financial document assistant.
 
-    # Number the chunks explicitly so the model can reference them by index
+    First, decide whether the provided numbered document excerpts contain enough information
+    to confidently answer the question. Set "sufficient" to true or false accordingly.
+
+    If sufficient is true:
+    - Answer the question accurately based only on the excerpts. Do not hallucinate.
+    - Keep the answer concise but complete. After answering, briefly suggest related questions
+      you could answer based on the excerpts.
+    - Return the 1-based indices of the chunks you actually used in used_chunk_indices.
+    - DO NOT refer to specific chunks by number in your answer text.
+
+    If sufficient is false:
+    - Explain briefly why the excerpts do not contain enough information to answer the question.
+    - Suggest specific related questions you could answer based on what the excerpts do contain.
+    - Set used_chunk_indices to an empty list.
+
+    Return a JSON object only — no preamble, no markdown fences."""
+
     chunks_text = "\n\n".join(
         f"[Chunk {i+1} | Source: '{c.get('filename', 'unknown')}', Page {c.get('page_number', '?')}]:\n{c.get('chunk_text', '')}"
         for i, c in enumerate(retrieved_chunks)
     )
 
-    # Format recent conversation history for continuity
     history_text = "\n".join(
         f"{msg['role'].upper()}: {msg['content']}"
         for msg in conversation_history
     )
 
     user_prompt = f"""Recent conversation:
-{history_text}
+    {history_text}
 
-Numbered document excerpts:
-{chunks_text}
+    Numbered document excerpts:
+    {chunks_text}
 
-Question: {refined_query}
+    Question: {refined_query}
 
-Return ONLY a JSON object with no preamble or markdown:
-{{
-  "answer": "your answer in markdown format",
-  "used_chunk_indices": [list of chunk numbers (1-based) that you actually used to write the answer]
-}}"""
+    Return ONLY a JSON object with no preamble or markdown:
+    {{
+    "sufficient": true or false,
+    "answer": "your answer or insufficiency explanation in markdown format",
+    "used_chunk_indices": [1-based indices of chunks used, or empty list if insufficient]
+    }}"""
 
     try:
         model = _get_generative_model()
@@ -256,12 +231,14 @@ Return ONLY a JSON object with no preamble or markdown:
         result = json.loads(response.text.strip())
         answer = result.get("answer", "")
         used_indices = result.get("used_chunk_indices", [])
+        sufficient = result.get("sufficient", True)
         logger.info(
-            "Answer generation complete. Length: %d chars. Used chunks: %s",
+            "Answer generation complete. sufficient=%s, length=%d chars, used chunks: %s",
+            sufficient,
             len(answer),
             used_indices,
         )
-        return {"answer": answer, "used_chunk_indices": used_indices}
+        return {"answer": answer, "used_chunk_indices": used_indices, "sufficient": sufficient}
     except Exception:
         logger.exception("Answer generation failed.")
         raise

@@ -4,6 +4,7 @@ import ChatWindow from './components/ChatWindow.jsx'
 import MessageInput from './components/MessageInput.jsx'
 import DocumentList from './components/DocumentList.jsx'
 import LoadingIndicator from './components/LoadingIndicator.jsx'
+import reductoLogo from './assets/reducto_logo.png'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
@@ -33,7 +34,7 @@ export default function App() {
   // -------------------------------------------------------------------------
   const [messages, setMessages] = useState([])        // Chat history
   const [documents, setDocuments] = useState([])      // Uploaded document list
-  const [isUploading, setIsUploading] = useState(false)
+  const [uploadingFilename, setUploadingFilename] = useState(null)
   const [isQuerying, setIsQuerying] = useState(false)
   const [error, setError] = useState(null)
 
@@ -98,7 +99,7 @@ export default function App() {
    * Updates the document list after a successful upload.
    */
   const uploadFile = useCallback(async (file) => {
-    setIsUploading(true)
+    setUploadingFilename(file.name)
     setError(null)
 
     const formData = new FormData()
@@ -122,7 +123,7 @@ export default function App() {
       setError(err.message || 'Upload failed. Please try again.')
       return null
     } finally {
-      setIsUploading(false)
+      setUploadingFilename(null)
     }
   }, [sessionId, refreshDocuments])
 
@@ -171,17 +172,20 @@ export default function App() {
    *
    * If only a message is submitted (no file), go straight to the query.
    */
-  const handleSubmit = useCallback(async (message, file) => {
-    if (file) {
-      // Upload first, then auto-query
-      const uploadResult = await uploadFile(file)
-      if (!uploadResult) return  // Upload failed — error already set
+  const handleSubmit = useCallback(async (message, files) => {
+    if (files && files.length > 0) {
+      // Upload all files sequentially, then fire the query
+      for (const file of files) {
+        const uploadResult = await uploadFile(file)
+        if (!uploadResult) continue  // Upload failed — error already set
 
-      if (uploadResult.status === 'already_exists') {
-        appendMessage('assistant', `"${uploadResult.filename}" is already in the document library.`)
+        if (uploadResult.status === 'already_exists') {
+          appendMessage('assistant', `"${uploadResult.filename}" is already in the document library.`)
+        } else {
+          appendMessage('assistant', `The file "${uploadResult.filename}" has finished processing! I'm ready to answer your questions about it.`)
+        }
       }
 
-      // Fire the query automatically after successful upload
       if (message.trim()) {
         await sendQuery(message)
       }
@@ -211,20 +215,20 @@ export default function App() {
   // -------------------------------------------------------------------------
   // Render
   // -------------------------------------------------------------------------
-  const isLoading = isUploading || isQuerying
+  const isLoading = !!uploadingFilename || isQuerying
 
   return (
     <div style={styles.appShell}>
       {/* Sidebar */}
       <aside style={styles.sidebar}>
         <div style={styles.sidebarHeader}>
-          <h1 style={styles.appTitle}>Reducto RAG</h1>
+          <img src={reductoLogo} alt="Reducto" style={styles.logo} />
           <p style={styles.appSubtitle}>Financial Document Assistant</p>
         </div>
         <DocumentList
           documents={documents}
           onDelete={handleDeleteDocument}
-          isUploading={isUploading}
+          isUploading={!!uploadingFilename}
         />
       </aside>
 
@@ -241,7 +245,7 @@ export default function App() {
 
         {isLoading && (
           <LoadingIndicator
-            message={isUploading ? 'Processing document…' : 'Thinking…'}
+            message={uploadingFilename ? `Processing ${uploadingFilename}…` : 'Thinking…'}
           />
         )}
 
@@ -277,11 +281,11 @@ const styles = {
     padding: '20px 16px 14px',
     borderBottom: '1px solid var(--color-border)',
   },
-  appTitle: {
-    fontSize: 18,
-    fontWeight: 700,
-    color: 'var(--color-primary)',
-    letterSpacing: '-0.3px',
+  logo: {
+    width: '100%',
+    maxWidth: 140,
+    display: 'block',
+    marginBottom: -18,
   },
   appSubtitle: {
     fontSize: 12,

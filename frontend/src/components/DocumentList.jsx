@@ -96,8 +96,8 @@ const styles = {
     color: 'var(--color-text-muted)',
   },
   count: {
-    background: '#ebf4ff',
-    color: 'var(--color-primary)',
+    background: '#8B2FC9',
+    color: '#f3e8fd',
     borderRadius: 10,
     padding: '1px 6px',
     fontSize: 10,

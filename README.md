@@ -11,7 +11,7 @@ A prototype RAG application for investment advisors. Upload PDFs, ask questions 
 - **Database:** PostgreSQL with pgvector on GCP Cloud SQL
 - **Document parsing:** Reducto API (chunked + figure-summarised output)
 - **Embeddings:** Vertex AI `gemini-embedding-001` (768-dimensional)
-- **Generation:** Vertex AI `gemini-2.5-flash`
+- **Generation:** Vertex AI `gemini-2.5-flash` (answers) + `gemini-2.5-flash-lite` (intent classification)
 - **Deployment:** Single Docker container on GCP Cloud Run
 
 ---
@@ -141,6 +141,8 @@ Open **http://localhost:3000**. The Vite dev server proxies all `/api/*` request
 ---
 
 ## Testing with Docker Locally
+
+> **When to use this vs. normal local dev:** Use the normal local dev setup (uvicorn + `npm run dev`) for day-to-day development — backend changes reload instantly and frontend changes appear in the browser via Vite's hot module replacement. Use `dockertest.sh` as a one-time pre-deploy check: it validates that the multi-stage Docker build works, the React app is correctly compiled and served as static files, and the production environment wiring is right. Every code change requires a full image rebuild, so it is too slow for iterative development.
 
 Before deploying to Cloud Run it is useful to run the app inside a Docker container on your machine. This validates the multi-stage build, static file serving, and environment wiring end-to-end — with no separate Vite dev server.
 
@@ -310,34 +312,33 @@ gcloud run services logs read reducto-rag --region=$REGION --project=$PROJECT_ID
 
 ## Agentic Pipeline Architecture
 
-Every user message passes through a five-step agentic pipeline in `orchestrator.py`:
+Every user message passes through a four-step agentic pipeline in `orchestrator.py`:
 
 ```
 User message
      │
      ▼
-[1] Intent Classification (generation.py)
-     │  Gemini decides: "query" or "out_of_scope"
-     │  Returns a refined, precise version of the query
+[1] Intent Classification  (generation.py — gemini-2.5-flash-lite)
+     │  Classifies intent as "query" or "out_of_scope"
+     │  Returns a refined, retrieval-optimised version of the query
+     │  Identifies which uploaded documents are most likely relevant
      │
      ▼ (if "query")
-[2] Query Embedding (embeddings.py)
+[2] Query Embedding  (embeddings.py)
      │  Embed the refined query with gemini-embedding-001
      │
      ▼
-[3] Chunk Retrieval (retrieval.py)
+[3] Chunk Retrieval  (retrieval.py)
      │  Cosine similarity search against pgvector
-     │  Returns top-5 most relevant chunks + document metadata
+     │  Filtered to the relevant documents identified in step 1
+     │  Returns top-25 most similar chunks + document metadata
      │
      ▼
-[4] Sufficiency Self-Evaluation (generation.py)
-     │  Gemini checks: do these chunks actually answer the question?
-     │  If not sufficient → return an honest "can't answer" message
-     │
-     ▼ (if sufficient)
-[5] Answer Generation (generation.py)
-     │  Gemini generates a grounded answer, citing which chunks it used
-     │
+[4] Answer Generation  (generation.py — gemini-2.5-flash)
+     │  Gemini evaluates whether the chunks are sufficient to answer
+     │  If sufficient  → generates a grounded answer, cites which chunks it used
+     │  If insufficient → explains what information is missing and suggests
+     │                    related questions the documents can answer
      ▼
 Answer + Source Citations → Frontend
 ```

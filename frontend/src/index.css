@@ -9,14 +9,14 @@
   --color-bg: #f8f9fa;
   --color-surface: #ffffff;
   --color-border: #e2e8f0;
-  --color-primary: #1a56db;
-  --color-primary-hover: #1648c0;
+  --color-primary: #8B2FC9;
+  --color-primary-hover: #7828b0;
   --color-text-primary: #1a202c;
   --color-text-secondary: #4a5568;
   --color-text-muted: #718096;
-  --color-user-bubble: #1a56db;
+  --color-user-bubble: #8B2FC9;
   --color-user-bubble-text: #ffffff;
-  --color-assistant-bubble: #f0f4ff;
+  --color-assistant-bubble: #fdf9ff;
   --color-assistant-bubble-text: #1a202c;
   --color-error: #e53e3e;
   --color-success: #38a169;
@@ -45,10 +45,10 @@ body {
 }
 
 /* Markdown content inside assistant bubbles */
-.assistant-markdown p { margin-bottom: 8px; }
+.assistant-markdown p { margin-bottom: 4px; }
 .assistant-markdown p:last-child { margin-bottom: 0; }
-.assistant-markdown ul, .assistant-markdown ol { padding-left: 20px; margin-bottom: 8px; }
-.assistant-markdown li { margin-bottom: 2px; }
+.assistant-markdown ul, .assistant-markdown ol { padding-left: 20px; margin-bottom: 4px; }
+.assistant-markdown li { margin-bottom: 0; }
 .assistant-markdown strong { font-weight: 600; }
 .assistant-markdown em { font-style: italic; }
 .assistant-markdown code { background: rgba(0,0,0,0.06); padding: 1px 4px; border-radius: 3px; font-size: 13px; }

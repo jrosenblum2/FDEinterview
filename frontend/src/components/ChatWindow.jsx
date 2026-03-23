@@ -35,7 +35,7 @@ export default function ChatWindow({ messages }) {
           <div key={msg.id} style={styles.messageWrapper(msg.role)}>
             <div style={styles.bubble(msg.role)}>
               {msg.role === 'assistant' ? (
-                <div style={styles.messageText} className="assistant-markdown">
+                <div style={styles.assistantText} className="assistant-markdown">
                   <Markdown>{msg.content}</Markdown>
                 </div>
               ) : (
@@ -91,6 +91,11 @@ const styles = {
     fontSize: 14,
     lineHeight: 1.6,
     whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+  },
+  assistantText: {
+    fontSize: 14,
+    lineHeight: 1.6,
     wordBreak: 'break-word',
   },
   empty: {
