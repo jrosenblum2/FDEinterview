@@ -6,6 +6,8 @@ A prototype RAG application for investment advisors. Upload PDFs, ask questions 
 
 ## Project Overview
 
+![System Architecture](assets/system_diagram.png)
+
 - **Backend:** Python + FastAPI, served by Uvicorn
 - **Frontend:** React (Vite), served as static files by the FastAPI backend in production
 - **Database:** PostgreSQL with pgvector on GCP Cloud SQL

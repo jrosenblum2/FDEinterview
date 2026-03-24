@@ -22,8 +22,7 @@ dependencies = [
     "google-cloud-aiplatform>=1.60.0",
     "vertexai>=1.60.0",
 
-    # Reducto document parsing API (reductoai is the correct PyPI package name;
-    # the unrelated "reducto" package on PyPI is a Python code stats tool)
+    # Reducto document parsing API 
     "reductoai",
 
     # Environment / config

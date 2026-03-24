@@ -67,6 +67,7 @@ def classify_intent(
         A dict with keys:
             - intent (str): 'query' or 'out_of_scope'
             - refined_query (str): The cleaned-up version of the user's question.
+            - relevant_documents (list): The documents deemed to be most relevant to the user's query to improve retrieval
 
     Raises:
         Exception: Re-raises any Vertex AI or JSON parsing error after logging.
